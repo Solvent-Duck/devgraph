@@ -1,6 +1,6 @@
 # Idea: A mergeable record of development context
 
-*Working name: TBD · Status: idea / spitballing · Nov 22, 2026*
+*Working name: devgraph · Status: idea, v1 scoped · Nov 22, 2026 (v1 scope added Nov 23, 2026)*
 
 ## One line
 
@@ -63,7 +63,7 @@ Brain mapping:
 
 ### Rules
 1. **One file per node, stable hash IDs.** Two branches adding nodes never conflict.
-2. **Merge rules per field, shipped as a git merge driver.** Sets (labels, links) take the union. Status follows rules ("done beats open"). Deletes leave tombstones. A plain `git merge` must just work.
+2. **Conflict-free by construction, no merge driver.** A file, once written, never changes. A status change, a new link, a supersede or a delete (tombstone) is a new small event file with its own ID. Reads fold the events onto the node ("done beats open", links take the union). So a plain `git merge`, GitHub's merge buttons and rebases all just work with nothing to configure. (A custom merge driver was the first idea; it was dropped because drivers don't travel with `git clone` and hosted forges never run them.)
 3. **One decision per node.** Never store a whole doc as one node. Small nodes let a later version replace exactly one rule and leave the rest valid.
 4. **No orphans.** Every node links to code, a commit, or another node, or it is rejected / expires.
 5. **Plain files are the truth.** Readable, diffable, rebuildable. Delete every index and nothing is lost.
@@ -73,15 +73,18 @@ Brain mapping:
 Memory products turn to slop because they store everything, retrieve by "looks similar," never delete, and no person reviews what goes in. Fix each:
 
 - **Structure first, search second.** Agents find context by following links from code (blame for reasons), not by similarity.
-- **Gate on writes.** Branches can be messy. Main only takes what survives the squash and gets approved in the PR.
-- **Squash on merge.** Fifty scratch tasks collapse into a few lasting nodes: what changed, what was decided, what is still open. Agent proposes, dev approves in review.
-- **Budget per PR.** Cap how many lasting nodes one PR adds to main.
-- **Deletion built in.** When code is deleted, nodes that point only at it are archived. Superseded nodes drop out of default results.
+- **Gate on writes.** Branches can be messy. Main only takes what survives the squash.
+- **Squash on merge.** Fifty scratch tasks collapse into a few lasting nodes: what changed, what was decided, what is still open. Agent proposes; a dev may approve in review.
+- **Safe when nobody reviews.** Devs rubber-stamp under deadline, so review can't be the only gate. Squashed nodes land in main marked *unreviewed* and rank below reviewed ones. Review is an optional promotion, not a blocker. A skipped review costs ranking, not trust.
+- **Budget per PR.** Cap how many lasting nodes one PR adds to main, so the graph diff stays short enough to actually read.
+- **Deletion built in, never silent.** When the code a node points at disappears, the node is flagged "anchor lost" for a person to resolve, never auto-archived (refactors look like deletes). Superseded nodes drop out of default results.
 - **Readable PR diff.** "This PR closes 3 tasks, adds 1 decision, leaves 2 open," next to the code diff.
 
 **Test:** can a new engineer read main's graph for one feature in five minutes and understand why it is built that way? If they need a search box, it is slop.
 
-## Strength, decay and recall
+## Strength, decay and recall (deferred past v1)
+
+**Not in v1.** Explicit `supersedes` links plus recency cover most of the "old knowledge" problem without usage logs to sync across a team. Revisit only if deterministic traversal (`blame`, links, supersedes) proves not enough. If decay returns, `caveat` nodes and rejected options must not decay while their code anchor exists: an agent that avoided a trap rarely cites the warning, so the merged-citation rule below would starve preventive knowledge.
 
 Borrow from human-memory models (ACT-R style: strength rises with each use and fades with time since use).
 
@@ -105,6 +108,8 @@ Vector stores fail here because v2 and v4 docs look almost the same. The graph k
 2. **Stamp old nodes.** When history is wanted, old nodes come back labeled: "Replaced by [node], [date]. Don't follow this."
 3. **Catch replacements at write time.** This is where embeddings help: on merge, find very similar existing nodes and ask "does this replace one of these?" Confirmed in the PR.
 4. **Caveats attach to code, not docs.** A footnote like "possible floating point error in f()" is a `caveat` node linked to `f()`. Replacing the doc does not replace the caveat. It lives as long as `f()` exists and fades only when that code is deleted or rewritten.
+   - **Anchors (v1):** a `touches` link records a file and line range at a specific commit. Reads follow it forward with git's rename and move detection (`git blame -M -C`). Function-level anchors (AST tracking) come later. Inline tags in source are out: devs won't keep them.
+   - **When an anchor is lost** (file gone, lines moved beyond what git can follow), the caveat is flagged for a person, not archived. Extracting or renaming `f()` must never quietly drop its caveat.
 5. **Explicit handoff on supersede.** When v4 replaces v2, list everything hanging off v2 (caveats, known issues, open questions) and ask: carry forward, replace or drop? Default is carry forward; dropping needs a reason.
 6. **Debug mode searches everything.** Chasing a bug, point at the failing code and walk back through every change, decision and caveat ever linked to it, superseded ones included.
 
@@ -115,6 +120,10 @@ Honest limit: it can't catch what nobody wrote down, and rare latent bugs (one i
 spec → decision → code → outcome → lesson → next spec
 
 Outcomes arrive after merge (bugs weeks later, metrics after launch, reverts). The system must let them attach after the fact: "this incident traces back to that decision." That link is what no tool records today, and it is where senior judgment comes from.
+
+**Capture must be one step.** Incidents surface in Slack, PagerDuty and dashboards weeks after merge. If logging one means a branch, a file and a PR, nobody will do it.
+- **v1:** `devgraph outcome add <change-id>` writes one outcome file and commits it. Reverts and hotfix PRs create outcome nodes automatically.
+- **Later:** a GitHub Action or Slack bot that appends outcomes without anyone opening a branch, so metrics and operational lessons with no code change are captured too.
 
 **Graph → CLAUDE.md promotion:** when the same outcome keeps recurring, the graph can suggest a line for CLAUDE.md. A human decides. CLAUDE.md stays short and current.
 
@@ -127,22 +136,33 @@ Outcomes arrive after merge (bugs weeks later, metrics after launch, reverts). T
 
 ## Open questions
 
-- Who decides what survives the squash: agent, dev, or a rule? (Leaning: agent proposes, dev approves.)
-- How do rebases replay graph changes on long-lived branches?
+- Who decides what survives the squash: agent, dev, or a rule? (Leaning: agent proposes, lands as unreviewed, dev may promote.)
 - Monorepo vs many repos: one brain per repo, or linked brains?
-- Where do usage logs and weights live for a team (local per dev, shared service, or a derived file rebuilt in CI)?
 - Exact squash budget per PR.
+- Where `outcome add` commits when main is protected: straight to main, a dedicated outcomes branch, or an auto-merged PR?
+- How often to fold event files back into a compact snapshot, if ever, without breaking the append-only rule.
+
+Answered: rebases need no special handling (nothing is ever edited, so there are no edits to replay). Where usage logs and weights live is moot until decay returns.
 - File format: Markdown with frontmatter, JSONL, or both?
 - Contribute to / build on Beads' format vs a fresh format? (Beads moved to Dolt, away from git-native; that gap is the reason for a new project.)
 
-## Suggested first build steps
+## v1 scope
 
-1. Write the file format spec: node types, link types, frontmatter fields, ID scheme.
-2. CLI: `init`, `add`, `link`, `show`, `blame <file:line>`.
-3. Git merge driver for the node files, with tests for concurrent branch edits.
-4. Squash-on-merge: agent proposes lasting nodes from branch scratch; output a readable graph diff for the PR.
-5. Supersede resolution + stamping in all read paths.
-6. Recall (3 + 2) and unweighted search; reinforcement only from merged-PR citations.
-7. MCP server + AGENTS.md snippet.
-8. Dogfood on our own repo until the core stands alone.
-9. Only then: third-party importers (Spec Kit, Beads), mapping into our types.
+Bet on the deterministic graph first: `blame` + `caveat` + `supersedes`. It pays off on day one for a solo dev, and the squash can't be tested until there's a format to squash and a reader that shows it's worth keeping.
+
+**In v1:** the append-only file format, `init` / `add` / `link` / `show` / `blame <file:line>`, supersede resolution and stamping on every read, line-range anchors with "anchor lost" flags, `outcome add`.
+
+**Not in v1:** merge driver (not needed), squash-on-merge, decay and weights, 3 + 2 recall, embeddings, MCP server, outcome bots, importers.
+
+## Build order
+
+1. Write the file format spec: node types, link types, event files, frontmatter fields, ID scheme, how reads fold events onto nodes.
+2. CLI: `init`, `add`, `link`, `show`. Tests that two branches adding and changing the same node merge with plain `git merge` and no conflicts.
+3. `touches` anchors (file + line range at a commit) and `blame <file:line>`, following renames and moves; "anchor lost" flags.
+4. Supersede resolution + stamping in all read paths.
+5. `outcome add <change-id>`; auto-create outcomes from reverts.
+6. Dogfood on this repo until the core stands alone.
+7. Squash-on-merge: agent proposes lasting nodes from branch scratch, lands as unreviewed, readable graph diff for the PR, per-PR budget.
+8. MCP server + AGENTS.md snippet.
+9. Only if traversal proves not enough: recall (3 + 2), decay, merged-citation reinforcement.
+10. Only then: third-party importers (Spec Kit, Beads), mapping into our types.
