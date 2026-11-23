@@ -10,9 +10,12 @@ devgraph (working name): an open-source, git-native graph that records spec, tas
 
 ## Layout
 
-- `src/cli.ts`: CLI entry. Runs directly on Node (type stripping, no build step).
+- `src/cli.ts`: CLI entry and argument parsing. Runs directly on Node (type stripping, no build step).
+- `src/graph.ts`: load nodes, apply events, write nodes and events.
+- `src/format.ts`: read and write the `---` header files.
 - `test/`: Vitest tests.
 - `docs/PLAN.md`: the idea doc.
+- `docs/FORMAT.md`: the file format spec. Change it before changing the format.
 
 ## Rules
 

@@ -4,7 +4,7 @@ import { run } from "../src/cli.ts";
 test("prints usage with no command", () => {
   const { code, out } = run([]);
   expect(code).toBe(0);
-  expect(out).toContain("Usage: devgraph");
+  expect(out).toContain("devgraph add <type>");
 });
 
 test("rejects an unknown command", () => {
